@@ -108,23 +108,33 @@ func loadIndex(st *store.Store) (*index.Index, error) {
 
 	idx := index.New()
 
-	// Rebuild the index posting lists and doc lengths directly
-	// (bypassing AddDocument to avoid recomputing AvgDocLen per-doc).
+	// Rebuild posting lists and doc lengths directly (no per-doc avg recalculation).
 	for docID, terms := range docTF {
 		var docLen int
+		entries := make(map[string][]index.PostingEntry)
 		for term, freq := range terms {
-			idx.Postings[term] = append(idx.Postings[term], index.PostingEntry{
-				DocID:    docID,
-				TermFreq: freq,
-			})
+			entries[term] = append(entries[term], index.PostingEntry{DocID: docID, TermFreq: freq})
 			docLen += freq
 		}
-		idx.DocLengths[docID] = docLen
+		for term, e := range entries {
+			for _, pe := range e {
+				idx.SetPostings(term, append(idx.GetPostings(term), pe))
+			}
+		}
+		idx.SetDocLength(docID, docLen)
 	}
 
 	// Restore corpus-level stats.
-	idx.TotalDocs = int(corpusStats["total_docs"])
-	idx.AvgDocLen = corpusStats["avg_doc_length"]
+	idx.SetCorpusStats(int(corpusStats["total_docs"]), corpusStats["avg_doc_length"])
+
+	// Pre-warm snippet cache.
+	snippets, err := st.LoadAllDocumentSnippets()
+	if err != nil {
+		return nil, fmt.Errorf("load snippets: %w", err)
+	}
+	for docID, snippet := range snippets {
+		idx.SetSnippet(docID, snippet)
+	}
 
 	return idx, nil
 }

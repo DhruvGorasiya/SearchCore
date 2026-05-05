@@ -39,7 +39,6 @@ func TestIDF(t *testing.T) {
 }
 
 func TestIDFFormula(t *testing.T) {
-	// Manually verify the formula: ln((N-df+0.5)/(df+0.5) + 1)
 	N, df := 10, 2
 	expected := math.Log((float64(N-df)+0.5)/(float64(df)+0.5) + 1.0)
 	got := idf(N, df)
@@ -60,7 +59,7 @@ func TestSearch_Empty(t *testing.T) {
 
 func TestSearch_SingleDocument(t *testing.T) {
 	idx := New()
-	idx.AddDocument(1, []string{"search", "engine", "search", "fast"})
+	idx.AddDocument(1, []string{"search", "engine", "search", "fast"}, "search engine search fast")
 
 	hits := Search(idx, []string{"search"}, 10)
 	if len(hits) != 1 {
@@ -76,9 +75,8 @@ func TestSearch_SingleDocument(t *testing.T) {
 
 func TestSearch_Ranking(t *testing.T) {
 	idx := New()
-	// Doc 2 has "search" twice, doc 1 has it once — doc 2 should rank higher.
-	idx.AddDocument(1, []string{"search", "engine"})
-	idx.AddDocument(2, []string{"search", "search", "engine"})
+	idx.AddDocument(1, []string{"search", "engine"}, "search engine")
+	idx.AddDocument(2, []string{"search", "search", "engine"}, "search search engine")
 
 	hits := Search(idx, []string{"search"}, 10)
 	if len(hits) != 2 {
@@ -92,7 +90,7 @@ func TestSearch_Ranking(t *testing.T) {
 func TestSearch_TopK(t *testing.T) {
 	idx := New()
 	for i := 1; i <= 10; i++ {
-		idx.AddDocument(i, []string{"common", "term"})
+		idx.AddDocument(i, []string{"common", "term"}, "common term")
 	}
 
 	hits := Search(idx, []string{"common"}, 3)
@@ -103,15 +101,13 @@ func TestSearch_TopK(t *testing.T) {
 
 func TestSearch_MultiTermQuery(t *testing.T) {
 	idx := New()
-	// Doc 1 matches both terms, doc 2 matches only one.
-	idx.AddDocument(1, []string{"inverted", "index", "search"})
-	idx.AddDocument(2, []string{"database", "index"})
+	idx.AddDocument(1, []string{"inverted", "index", "search"}, "inverted index search")
+	idx.AddDocument(2, []string{"database", "index"}, "database index")
 
 	hits := Search(idx, []string{"inverted", "index"}, 10)
 	if len(hits) < 1 {
 		t.Fatal("expected hits, got none")
 	}
-	// Doc 1 matches both query terms, should rank first.
 	if hits[0].DocID != 1 {
 		t.Errorf("expected doc 1 to rank first, got doc %d", hits[0].DocID)
 	}
@@ -119,7 +115,7 @@ func TestSearch_MultiTermQuery(t *testing.T) {
 
 func TestSearch_NoMatchingTerm(t *testing.T) {
 	idx := New()
-	idx.AddDocument(1, []string{"hello", "world"})
+	idx.AddDocument(1, []string{"hello", "world"}, "hello world")
 
 	hits := Search(idx, []string{"nosuchterm"}, 10)
 	if len(hits) != 0 {
@@ -127,21 +123,35 @@ func TestSearch_NoMatchingTerm(t *testing.T) {
 	}
 }
 
+func TestSearch_SnippetIncluded(t *testing.T) {
+	idx := New()
+	idx.AddDocument(1, []string{"search", "engine"}, "search engine document")
+
+	hits := Search(idx, []string{"search"}, 10)
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %d", len(hits))
+	}
+	if hits[0].Snippet == "" {
+		t.Error("expected non-empty snippet in search result")
+	}
+}
+
 func TestIndex_AddRemove(t *testing.T) {
 	idx := New()
-	idx.AddDocument(1, []string{"foo", "bar", "foo"})
-	idx.AddDocument(2, []string{"bar", "baz"})
+	idx.AddDocument(1, []string{"foo", "bar", "foo"}, "foo bar foo")
+	idx.AddDocument(2, []string{"bar", "baz"}, "bar baz")
 
-	if idx.TotalDocs != 2 {
-		t.Errorf("expected TotalDocs=2, got %d", idx.TotalDocs)
+	totalDocs, _ := idx.Snapshot()
+	if totalDocs != 2 {
+		t.Errorf("expected TotalDocs=2, got %d", totalDocs)
 	}
 
 	idx.RemoveDocument(1)
-	if idx.TotalDocs != 1 {
-		t.Errorf("expected TotalDocs=1 after remove, got %d", idx.TotalDocs)
+	totalDocs, _ = idx.Snapshot()
+	if totalDocs != 1 {
+		t.Errorf("expected TotalDocs=1 after remove, got %d", totalDocs)
 	}
 
-	// "foo" should no longer appear in any posting.
 	postings := idx.GetPostings("foo")
 	if len(postings) != 0 {
 		t.Errorf("expected no postings for 'foo' after remove, got %v", postings)
@@ -150,6 +160,5 @@ func TestIndex_AddRemove(t *testing.T) {
 
 func TestIndex_RemoveNonExistent(t *testing.T) {
 	idx := New()
-	// Should not panic.
 	idx.RemoveDocument(999)
 }

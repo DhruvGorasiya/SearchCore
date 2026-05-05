@@ -220,6 +220,27 @@ func (s *Store) DeleteDocument(docID int) error {
 	return nil
 }
 
+// LoadAllDocumentSnippets returns a map of doc_id -> first 200 chars of content
+// for all documents. Used to pre-warm the in-memory snippet cache at startup.
+func (s *Store) LoadAllDocumentSnippets() (map[int]string, error) {
+	rows, err := s.db.Query(`SELECT id, LEFT(content, 200) FROM documents ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("load snippets: %w", err)
+	}
+	defer rows.Close()
+
+	snippets := make(map[int]string)
+	for rows.Next() {
+		var id int
+		var snippet string
+		if err := rows.Scan(&id, &snippet); err != nil {
+			return nil, fmt.Errorf("scan snippet: %w", err)
+		}
+		snippets[id] = snippet
+	}
+	return snippets, rows.Err()
+}
+
 // GetDocumentContent returns the content of a single document.
 func (s *Store) GetDocumentContent(docID int) (string, error) {
 	var content string
