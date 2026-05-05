@@ -54,8 +54,8 @@ func (s *SearchService) IndexDocument(ctx context.Context, req *pb.IndexRequest)
 		}
 	}
 
-	// Update in-memory index (this also recalculates AvgDocLen and TotalDocs).
-	s.idx.AddDocument(docID, tokens)
+	// Update in-memory index (also caches snippet and updates corpus stats).
+	s.idx.AddDocument(docID, tokens, req.Content)
 
 	// Persist updated corpus stats.
 	totalDocs, avgDocLen := s.idx.Snapshot()
@@ -82,19 +82,10 @@ func (s *SearchService) Search(ctx context.Context, req *pb.SearchRequest) (*pb.
 
 	results := make([]*pb.SearchResult, 0, len(hits))
 	for _, hit := range hits {
-		content, err := s.store.GetDocumentContent(hit.DocID)
-		if err != nil {
-			// Document may have been deleted between index and fetch; skip it.
-			continue
-		}
-		snippet := content
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
 		results = append(results, &pb.SearchResult{
 			DocId:   int32(hit.DocID),
 			Score:   float32(hit.Score),
-			Snippet: snippet,
+			Snippet: hit.Snippet,
 		})
 	}
 
