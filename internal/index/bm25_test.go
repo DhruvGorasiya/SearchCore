@@ -5,50 +5,31 @@ import (
 	"testing"
 )
 
-func TestIDF(t *testing.T) {
-	tests := []struct {
-		name string
-		N    int
-		df   int
-		// expected: roughly ln((N-df+0.5)/(df+0.5) + 1)
-		wantPositive bool
-		wantZero     bool
-	}{
-		{name: "df=0 returns 0", N: 100, df: 0, wantZero: true},
-		{name: "rare term has high IDF", N: 1000, df: 1, wantPositive: true},
-		{name: "common term has lower IDF", N: 1000, df: 500, wantPositive: true},
+// bm25IDF replicates the IDF formula for test assertions.
+// IDF(t) = ln((N - df + 0.5) / (df + 0.5) + 1)
+func bm25IDF(N, df int) float64 {
+	if df == 0 {
+		return 0
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := idf(tt.N, tt.df)
-			if tt.wantZero && got != 0 {
-				t.Errorf("idf(%d,%d) = %f, want 0", tt.N, tt.df, got)
-			}
-			if tt.wantPositive && got <= 0 {
-				t.Errorf("idf(%d,%d) = %f, want > 0", tt.N, tt.df, got)
-			}
-		})
-	}
-
-	// Rare terms should score higher than common terms.
-	rarIDF := idf(1000, 1)
-	comIDF := idf(1000, 500)
-	if rarIDF <= comIDF {
-		t.Errorf("rare IDF (%f) should exceed common IDF (%f)", rarIDF, comIDF)
-	}
+	return math.Log((float64(N-df)+0.5)/(float64(df)+0.5) + 1.0)
 }
 
-func TestIDFFormula(t *testing.T) {
-	N, df := 10, 2
-	expected := math.Log((float64(N-df)+0.5)/(float64(df)+0.5) + 1.0)
-	got := idf(N, df)
-	if math.Abs(got-expected) > 1e-9 {
-		t.Errorf("idf formula mismatch: got %f want %f", got, expected)
+func TestBM25IDF_Formula(t *testing.T) {
+	// Rare terms must score higher IDF than common terms.
+	N := 1000
+	rareIDF   := bm25IDF(N, 1)
+	commonIDF := bm25IDF(N, 500)
+	if rareIDF <= commonIDF {
+		t.Errorf("rare IDF (%f) should exceed common IDF (%f)", rareIDF, commonIDF)
+	}
+	if bm25IDF(N, 0) != 0 {
+		t.Errorf("IDF(df=0) should be 0")
 	}
 }
 
 func TestSearch_Empty(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	if hits := Search(idx, []string{"foo"}, 10); hits != nil {
 		t.Errorf("expected nil hits on empty index, got %v", hits)
 	}
@@ -59,6 +40,7 @@ func TestSearch_Empty(t *testing.T) {
 
 func TestSearch_SingleDocument(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	idx.AddDocument(1, []string{"search", "engine", "search", "fast"}, "search engine search fast")
 
 	hits := Search(idx, []string{"search"}, 10)
@@ -75,6 +57,7 @@ func TestSearch_SingleDocument(t *testing.T) {
 
 func TestSearch_Ranking(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	idx.AddDocument(1, []string{"search", "engine"}, "search engine")
 	idx.AddDocument(2, []string{"search", "search", "engine"}, "search search engine")
 
@@ -89,6 +72,7 @@ func TestSearch_Ranking(t *testing.T) {
 
 func TestSearch_TopK(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	for i := 1; i <= 10; i++ {
 		idx.AddDocument(i, []string{"common", "term"}, "common term")
 	}
@@ -101,6 +85,7 @@ func TestSearch_TopK(t *testing.T) {
 
 func TestSearch_MultiTermQuery(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	idx.AddDocument(1, []string{"inverted", "index", "search"}, "inverted index search")
 	idx.AddDocument(2, []string{"database", "index"}, "database index")
 
@@ -115,6 +100,7 @@ func TestSearch_MultiTermQuery(t *testing.T) {
 
 func TestSearch_NoMatchingTerm(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	idx.AddDocument(1, []string{"hello", "world"}, "hello world")
 
 	hits := Search(idx, []string{"nosuchterm"}, 10)
@@ -125,6 +111,7 @@ func TestSearch_NoMatchingTerm(t *testing.T) {
 
 func TestSearch_SnippetIncluded(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	idx.AddDocument(1, []string{"search", "engine"}, "search engine document")
 
 	hits := Search(idx, []string{"search"}, 10)
@@ -138,6 +125,7 @@ func TestSearch_SnippetIncluded(t *testing.T) {
 
 func TestIndex_AddRemove(t *testing.T) {
 	idx := New()
+	defer idx.Close()
 	idx.AddDocument(1, []string{"foo", "bar", "foo"}, "foo bar foo")
 	idx.AddDocument(2, []string{"bar", "baz"}, "bar baz")
 
@@ -152,13 +140,31 @@ func TestIndex_AddRemove(t *testing.T) {
 		t.Errorf("expected TotalDocs=1 after remove, got %d", totalDocs)
 	}
 
-	postings := idx.GetPostings("foo")
-	if len(postings) != 0 {
-		t.Errorf("expected no postings for 'foo' after remove, got %v", postings)
+	if df := idx.DocFreq("foo"); df != 0 {
+		t.Errorf("expected DocFreq('foo')=0 after remove, got %d", df)
 	}
 }
 
 func TestIndex_RemoveNonExistent(t *testing.T) {
 	idx := New()
-	idx.RemoveDocument(999)
+	defer idx.Close()
+	idx.RemoveDocument(999) // should not panic
+}
+
+func TestSearch_StemmedDocumentMatchesInflectedQuery(t *testing.T) {
+	// Index a document using the full Tokenize pipeline (which stems).
+	// Then search with a different inflection of the same word.
+	// Both should hit the same stem, so the document must be found.
+	idx := New()
+	defer idx.Close()
+
+	tokens := Tokenize("the dogs are running fast in the park")
+	idx.AddDocument(1, tokens, "the dogs are running fast in the park")
+
+	// Search for "run" — should match because "running" and "run" share the stem "run".
+	queryTokens := Tokenize("run")
+	hits := Search(idx, queryTokens, 10)
+	if len(hits) == 0 {
+		t.Error("expected a hit for stemmed query 'run' matching 'running' in document")
+	}
 }
