@@ -1,4 +1,6 @@
 bin/
+lib/
+internal/index/cpp/build/
 *.test
 *.out
 load_test/results/

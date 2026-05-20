@@ -96,32 +96,16 @@ func loadIndex(st *store.Store) (*index.Index, error) {
 		return nil, fmt.Errorf("load corpus stats: %w", err)
 	}
 
-	// Group postings by doc_id to reconstruct DocLengths.
-	// We compute doc lengths by summing term frequencies per document.
-	docTF := make(map[int]map[string]int) // docID -> term -> freq
-	for _, p := range postings {
-		if docTF[p.DocID] == nil {
-			docTF[p.DocID] = make(map[string]int)
-		}
-		docTF[p.DocID][p.Term] = p.TermFreq
-	}
-
 	idx := index.New()
 
-	// Rebuild posting lists and doc lengths directly (no per-doc avg recalculation).
-	for docID, terms := range docTF {
-		var docLen int
-		entries := make(map[string][]index.PostingEntry)
-		for term, freq := range terms {
-			entries[term] = append(entries[term], index.PostingEntry{DocID: docID, TermFreq: freq})
-			docLen += freq
-		}
-		for term, e := range entries {
-			for _, pe := range e {
-				idx.SetPostings(term, append(idx.GetPostings(term), pe))
-			}
-		}
-		idx.SetDocLength(docID, docLen)
+	// Rebuild posting lists one row at a time and accumulate doc lengths.
+	docLengths := make(map[int]int)
+	for _, p := range postings {
+		idx.SetPosting(p.Term, p.DocID, p.TermFreq)
+		docLengths[p.DocID] += p.TermFreq
+	}
+	for docID, length := range docLengths {
+		idx.SetDocLength(docID, length)
 	}
 
 	// Restore corpus-level stats.

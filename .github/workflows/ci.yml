@@ -19,6 +19,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install C++ toolchain
+        run: sudo apt-get update && sudo apt-get install -y g++
+
+      - name: Cache C++ build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            lib/libsearchindex.a
+            internal/index/cpp/build/
+          key: cpp-lib-${{ hashFiles('internal/index/cpp/**') }}
+
+      - name: Build C++ static library
+        run: make cpp-lib
+
       - name: Build
         run: go build ./...
 
